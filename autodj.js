@@ -1083,86 +1083,103 @@
     }
 
     function createTopbarButton() {
-        // Try Spicetify.Topbar.Button first
-        if (typeof Topbar !== 'undefined' && Topbar.Button) {
-            try {
-                // Fix 5: Use CONFIG.enabled for isActive
-                new Topbar.Button(
-                    'Auto-DJ',
-                    `<svg role="img" height="16" width="16" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                    </svg>`,
-                    () => openModal(),
-                    false,
-                    CONFIG.enabled
-                );
-                console.log('[Auto-DJ] Topbar.Button created');
-                return;
-            } catch (e) {
-                console.warn('[Auto-DJ] Topbar.Button failed, using manual injection', e);
+        const AUTODJ_SVG = `<svg role="img" height="16" width="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+        </svg>`;
+
+        // Try Spicetify.Topbar.Button with retry for async loading
+        let topbarRetries = 0;
+        const MAX_TOPBAR_RETRIES = 50;
+
+        function tryTopbarButton() {
+            const TB = Spicetify.Topbar;
+            if (TB?.Button) {
+                try {
+                    new TB.Button(
+                        'Auto-DJ',
+                        AUTODJ_SVG,
+                        () => openModal(),
+                        false,  // isLive
+                        true    // isRight — place on right side
+                    );
+                    console.log('[Auto-DJ] Topbar.Button created');
+                    return true;
+                } catch (e) {
+                    console.warn('[Auto-DJ] Topbar.Button failed:', e);
+                }
             }
+            return false;
         }
 
+        // Try immediately, then retry with backoff
+        if (tryTopbarButton()) return;
+
+        const topbarRetry = setInterval(() => {
+            topbarRetries++;
+            if (topbarRetries >= MAX_TOPBAR_RETRIES) {
+                clearInterval(topbarRetry);
+                console.warn('[Auto-DJ] Topbar not available after retries, using DOM fallback');
+                domFallback();
+                return;
+            }
+            if (tryTopbarButton()) clearInterval(topbarRetry);
+        }, 200);
+
         // Fallback: manual DOM injection
-        let retries = 0;
-        const MAX_RETRIES = 150;
+        function domFallback() {
+            let retries = 0;
+            const MAX_RETRIES = 100;
 
-        const waitForBar = () => {
-            if (retries >= MAX_RETRIES) {
-                console.warn('[Auto-DJ] Could not find top bar after', MAX_RETRIES, 'retries');
-                return;
-            }
-            retries++;
+            const waitForBar = () => {
+                if (retries >= MAX_RETRIES) {
+                    console.warn('[Auto-DJ] Could not find top bar after', MAX_RETRIES, 'retries');
+                    return;
+                }
+                retries++;
 
-            // Try multiple selectors for the top bar right side
-            const rightContainer =
-                document.querySelector('.main-topBar-topbarContentRight') ||
-                document.querySelector('.main-actionButtons') ||
-                document.querySelector('.main-topBar-right') ||
-                document.querySelector('[data-testid="topbar-background"]') ||
-                document.querySelector('.Root__globalNav');
+                // Modern Spotify selectors (ordered by reliability)
+                const rightContainer =
+                    document.querySelector('.main-topBar-topbarContentRight') ||
+                    document.querySelector('[data-testid="topbar-background"] button')?.parentElement ||
+                    document.querySelector('.main-actionButtons') ||
+                    document.querySelector('.Root__globalNav');
 
-            if (!rightContainer) {
-                requestAnimationFrame(waitForBar);
-                return;
-            }
+                if (!rightContainer) {
+                    requestAnimationFrame(waitForBar);
+                    return;
+                }
 
-            // Prevent duplicate buttons
-            if (document.getElementById('autodj-topbar-btn')) return;
+                // Prevent duplicate buttons
+                if (document.getElementById('autodj-topbar-btn')) return;
 
-            // Find an existing button to copy its class from
-            const existingBtn = rightContainer.querySelector('button');
+                const existingBtn = rightContainer.querySelector('button');
 
-            // Create wrapper
-            const wrapper = document.createElement('div');
-            wrapper.style.cssText = 'display:flex;align-items:center;';
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = 'display:flex;align-items:center;margin-left:8px;';
 
-            // Create button
-            const btn = document.createElement('button');
-            btn.id = 'autodj-topbar-btn';
-            btn.setAttribute('aria-label', 'Auto-DJ');
-            btn.setAttribute('title', 'Auto-DJ');
-            btn.setAttribute('data-testid', 'autodj-button');
+                const btn = document.createElement('button');
+                btn.id = 'autodj-topbar-btn';
+                btn.setAttribute('aria-label', 'Auto-DJ');
+                btn.setAttribute('title', 'Auto-DJ');
+                btn.setAttribute('data-testid', 'autodj-button');
 
-            if (existingBtn) {
-                btn.className = existingBtn.className;
-            } else {
-                btn.className = 'control-button';
-            }
+                if (existingBtn) {
+                    btn.className = existingBtn.className;
+                } else {
+                    btn.className = 'control-button';
+                }
 
-            btn.innerHTML = `<svg role="img" height="16" width="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-            </svg>`;
+                btn.innerHTML = AUTODJ_SVG;
+                btn.addEventListener('click', openModal);
 
-            btn.addEventListener('click', openModal);
+                wrapper.appendChild(btn);
+                rightContainer.prepend(wrapper);
 
-            wrapper.appendChild(btn);
-            rightContainer.prepend(wrapper);
+                console.log('[Auto-DJ] Button injected into top bar via DOM');
+            };
 
-            console.log('[Auto-DJ] Button injected into top bar');
-        };
-
-        waitForBar();
+            waitForBar();
+        }
     }
 
     // ── Init ────────────────────────────────────────────────────
